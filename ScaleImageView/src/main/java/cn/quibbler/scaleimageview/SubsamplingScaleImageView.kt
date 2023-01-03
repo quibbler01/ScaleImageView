@@ -1,18 +1,20 @@
 package cn.quibbler.scaleimageview
 
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.graphics.*
 import android.net.Uri
 import android.os.AsyncTask
 import android.os.Handler
+import android.os.Message
 import android.util.AttributeSet
 import android.util.Log
+import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import androidx.annotation.AnyThread
-import androidx.core.view.ContentInfoCompat.Flags
 import cn.quibbler.scaleimageview.decoder.*
 import java.util.*
 import java.util.concurrent.locks.ReadWriteLock
@@ -275,14 +277,153 @@ class SubsamplingScaleImageView : View {
     //The logical density of the display
     private val density: Float
 
-    constructor(context: Context?) : this(context, null)
-    constructor(context: Context?, attrs: AttributeSet?) : this(context, attrs, 0)
-    constructor(context: Context?, attrs: AttributeSet?, defStyleAttr: Int) : this(context, attrs, defStyleAttr, 0)
-    constructor(context: Context?, attrs: AttributeSet?, defStyleAttr: Int, defStyleRes: Int) : super(context, attrs, defStyleAttr, defStyleRes) {
+    constructor(context: Context) : this(context, null)
+    constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, 0)
+    constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) : this(context, attrs, defStyleAttr, 0)
+    constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int, defStyleRes: Int) : super(context, attrs, defStyleAttr, defStyleRes) {
         density = resources.displayMetrics.density
         setMinimumDpi(160)
         setDoubleTapZoomDpi(160)
         setMinimumTileDpi(320)
+        setGestureDetector(context)
+        this.handler = Handler(object : Handler.Callback {
+            override fun handleMessage(msg: Message): Boolean {
+                if (msg.what == MESSAGE_LONG_CLICK) {
+                    onLongClickListener?.let {
+                        maxTouchCount = 0
+                        this@SubsamplingScaleImageView.setOnLongClickListener(it)
+                        performLongClick()
+                        this@SubsamplingScaleImageView.setOnLongClickListener(null)
+                    }
+                }
+                return true
+            }
+        })
+        // Handle XML attributes
+        attrs?.let {
+            val typedAttr = context.obtainStyledAttributes(attrs, R.styleable.SubsamplingScaleImageView)
+            if (typedAttr.hasValue(R.styleable.SubsamplingScaleImageView_assetName)) {
+                val assetName = typedAttr.getString(R.styleable.SubsamplingScaleImageView_assetName)
+                if (assetName != null && assetName.length > 0) {
+                    setImage(ImageSource.asset(assetName).tilingEnable())
+                }
+            }
+            if (typedAttr.hasValue(R.styleable.SubsamplingScaleImageView_src)) {
+                val resId = typedAttr.getResourceId(R.styleable.SubsamplingScaleImageView_src)
+                if (resId > 0) {
+                    setImage(ImageSource.resource(resId).tilingEnable())
+                }
+            }
+            if (typedAttr.hasValue(R.styleable.SubsamplingScaleImageView_panEnabled)) {
+                setPanEnabled(typedAttr.getBoolean(R.styleable.SubsamplingScaleImageView_panEnabled, true));
+            }
+            if (typedAttr.hasValue(R.styleable.SubsamplingScaleImageView_zoomEnabled)) {
+                setZoomEnabled(typedAttr.getBoolean(R.styleable.SubsamplingScaleImageView_zoomEnabled, true));
+            }
+            if (typedAttr.hasValue(R.styleable.SubsamplingScaleImageView_quickScaleEnabled)) {
+                setQuickScaleEnabled(typedAttr.getBoolean(R.styleable.SubsamplingScaleImageView_quickScaleEnabled, true));
+            }
+            if (typedAttr.hasValue(styleable.SubsamplingScaleImageView_tileBackgroundColor)) {
+                setTileBackgroundColor(typedAttr.getColor(R.styleable.SubsamplingScaleImageView_tileBackgroundColor, Color.argb(0, 0, 0, 0)));
+            }
+            typedAttr.recycle()
+        }
+
+        quickScaleThreshold = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 20f, resources.displayMetrics)
+    }
+
+    /**
+     * Set the image source from a bitmap, resource, asset, file or other URI.
+     * @param imageSource Image source.
+     */
+    fun setImage(imageSource: ImageSource) {
+        setImage(imageSource, null, null)
+    }
+
+    /**
+     * Set the image source from a bitmap, resource, asset, file or other URI, starting with a given orientation
+     * setting, scale and center. This is the best method to use when you want scale and center to be restored
+     * after screen orientation change; it avoids any redundant loading of tiles in the wrong orientation.
+     * @param imageSource Image source.
+     * @param state State to be restored. Nullable.
+     */
+    fun setImage(imageSource: ImageSource, state: ImageViewState) {
+        setImage(imageSource, null, state)
+    }
+
+    /**
+     * Set the image source from a bitmap, resource, asset, file or other URI, providing a preview image to be
+     * displayed until the full size image is loaded.
+     *
+     * You must declare the dimensions of the full size image by calling {@link ImageSource#dimensions(int, int)}
+     * on the imageSource object. The preview source will be ignored if you don't provide dimensions,
+     * and if you provide a bitmap for the full size image.
+     * @param imageSource Image source. Dimensions must be declared.
+     * @param previewSource Optional source for a preview image to be displayed and allow interaction while the full size image loads.
+     */
+    fun setImage(imageSource: ImageSource, previewSource: ImageSource) {
+        setImage(imageSource, previewSource, null)
+    }
+
+    /**
+     * Set the image source from a bitmap, resource, asset, file or other URI, providing a preview image to be
+     * displayed until the full size image is loaded, starting with a given orientation setting, scale and center.
+     * This is the best method to use when you want scale and center to be restored after screen orientation change;
+     * it avoids any redundant loading of tiles in the wrong orientation.
+     *
+     * You must declare the dimensions of the full size image by calling {@link ImageSource#dimensions(int, int)}
+     * on the imageSource object. The preview source will be ignored if you don't provide dimensions,
+     * and if you provide a bitmap for the full size image.
+     * @param imageSource Image source. Dimensions must be declared.
+     * @param previewSource Optional source for a preview image to be displayed and allow interaction while the full size image loads.
+     * @param state State to be restored. Nullable.
+     */
+    fun setImage(imageSource: ImageSource, previewSource: ImageSource?, state: ImageViewState?) {
+        reset(true)
+        if (state != null) restoreState(state)
+        previewSource?.let {
+            if (imageSource.bitmap != null) {
+                throw IllegalArgumentException("Preview image cannot be used when a bitmap is provided for the main image")
+            }
+            if (imageSource.sWidth <= 0 || imageSource.sHeight <= 0) {
+                throw IllegalArgumentException("Preview image cannot be used unless dimensions are provided for the main image")
+            }
+            this.sWidth = imageSource.sWidth
+            this.sHeight = imageSource.sHeight
+            this.pRegion = it.sRegion
+            if (it.bitmap != null) {
+                this.bitmapIsCached = it.cached
+                onPreviewLoaded(it.bitmap)
+            } else {
+                var uri: Uri? = it.uri
+                if (uri == null && it.resource != null) {
+                    uri = Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.packageName + "/" + it.resource)
+                }
+                val task = BitmapLoadTask(this, context, bitmapDecoderFactory, uri, true)
+                execute(task)
+            }
+        }
+
+        if (imageSource.bitmap != null && imageSource.sRegion != null) {
+            onImageLoaded(Bitmap.createBitmap(imageSource.bitmap, imageSource.sRegion.left, imageSource.sRegion.top, imageSource.sRegion.width(), imageSource.sRegion.height()), ORIENTATION_0, false)
+        } else if (imageSource.bitmap != null) {
+            onImageLoaded(imageSource.bitmap, ORIENTATION_0, imageSource.cached)
+        } else {
+            sRegion = imageSource.sRegion
+            uri = imageSource.uri
+            if (uri == null && imageSource.resource != null) {
+                uri = Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.packageName + "/" + imageSource.resource)
+            }
+            if (imageSource.title || sRegion != null) {
+                // Load the bitmap using tile decoding.
+                val task = TilesInitTask(this, context, regionDecoderFactory, uri)
+                execute(task)
+            } else {
+                // Load the bitmap as a single image.
+                val task = TilesInitTask(this, context, regionDecoderFactory, uri, false)
+                execute(task)
+            }
+        }
     }
 
     /**
