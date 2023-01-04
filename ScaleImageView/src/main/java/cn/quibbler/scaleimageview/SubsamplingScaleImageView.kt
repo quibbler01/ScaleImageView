@@ -641,6 +641,18 @@ class SubsamplingScaleImageView : View {
             }
             return null
         }
+
+        override fun onPostExecute(xyo: IntArray?) {
+            val view = viewRef.get()
+            view?.let {
+                if (decoder != null && xyo != null && xyo.size == 3) {
+                    it.onTilesInited(decoder, xyo[0], xyo[1], xyo[2])
+                } else if (exception != null) {
+                    it.onImageEventListener?.onImageLoadError(exception)
+                }
+            }
+        }
+
     }
 
     /**
