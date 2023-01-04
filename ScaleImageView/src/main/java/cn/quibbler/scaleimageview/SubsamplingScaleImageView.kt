@@ -16,10 +16,12 @@ import android.view.MotionEvent
 import android.view.View
 import androidx.annotation.AnyThread
 import cn.quibbler.scaleimageview.decoder.*
+import java.lang.ref.WeakReference
 import java.util.*
 import java.util.concurrent.locks.ReadWriteLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -589,6 +591,56 @@ class SubsamplingScaleImageView : View {
 
         private val listener: OnAnimationEventListener? = null // Event listener
 
+    }
+
+    /**
+     * Async task used to get image details without blocking the UI thread.
+     */
+    private class TilesInitTask : AsyncTask<Unit, Unit, IntArray?> {
+
+        private val viewRef: WeakReference<SubsamplingScaleImageView>
+        private val contextRef: WeakReference<Context>
+        private val decoderFactoryRef: WeakReference<DecoderFactory<out ImageRegionDecoder>>
+        private val source: Uri
+        private var decoder: ImageRegionDecoder? = null
+        private var exception: Exception? = null
+
+        constructor(view: SubsamplingScaleImageView, context: Context, decoderFactory: DecoderFactory<out ImageRegionDecoder>, source: Uri) {
+            this.viewRef = WeakReference(view)
+            this.contextRef = WeakReference(context)
+            this.decoderFactoryRef = WeakReference(decoderFactory)
+            this.source = source
+        }
+
+        override fun doInBackground(vararg params: Unit?): IntArray? {
+            try {
+                val sourceUri: String = source.toString()
+                val context: Context? = contextRef.get()
+                val decoderFactory: DecoderFactory<out ImageRegionDecoder>? = decoderFactoryRef.get()
+                val view: SubsamplingScaleImageView? = viewRef.get()
+                if (context != null && decoderFactory != null && view != null) {
+                    view.debug("TilesInitTask.doInBackground")
+                    decoder = decoderFactory.make()
+                    val dimensions = decoder!!.init(context, source)
+                    var sWidth = dimensions.x
+                    var sHeight = dimensions.y
+                    val exifOrientation = view.getExifOrientation(context, sourceUri)
+                    view.sRegion?.let {
+                        it.left = max(0, it.left)
+                        it.top = max(0, it.top)
+                        it.right = max(0, it.right)
+                        it.bottom = max(0, it.bottom)
+                        sWidth = it.width()
+                        sHeight = it.height()
+                    }
+                    return intArrayOf(sWidth, sHeight, exifOrientation)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialise bitmap decoder", e)
+                this.exception = e
+            }
+            return null
+        }
     }
 
     /**
