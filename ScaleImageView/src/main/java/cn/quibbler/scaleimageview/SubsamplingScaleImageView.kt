@@ -142,9 +142,9 @@ class SubsamplingScaleImageView : View {
     private var uri: Uri? = null
 
     // Sample size used to display the whole image when fully zoomed out
-    private var fullImageSampleSize = 0
+    private var fullImageSampleSize: Int = 0
 
-    private var tileMap: MutableMap<Intent, MutableList<Tile>>? = null
+    private var tileMap: MutableMap<Int, MutableList<Tile>>? = null
 
     // Overlay tile boundaries and other info
     private var debug = false
@@ -196,7 +196,7 @@ class SubsamplingScaleImageView : View {
     private var vTranslateBefore: PointF? = null
 
     // Source coordinate to center on, used when new position is set externally before view is ready
-    private var pendingScale: Float = 0f
+    private var pendingScale: Float? = 0f
     private var sPendingCenter: PointF? = null
     private var sRequestedCenter: PointF? = null
 
@@ -687,6 +687,85 @@ class SubsamplingScaleImageView : View {
         requestLayout()
     }
 
+    /**
+     * Called on first draw when the view has dimensions. Calculates the initial sample size and starts async loading of
+     * the base layer image - the whole source subsampled as necessary.
+     */
+    @Synchronized
+    private fun initialiseBaseLayer(maxTileDimensions: Point) {
+        debug("initialiseBaseLayer maxTileDimensions=%dx%d", maxTileDimensions.x, maxTileDimensions.y)
+        satTemp = ScaleAndTranslate(0f, PointF(0f, 0f))
+        fitToBounds(true, satTemp)
+
+        // Load double resolution - next level will be split into four tiles and at the center all four are required,
+        // so don't bother with tiling until the next level 16 tiles are needed.
+        fullImageSampleSize = calculateInSampleSize(satTemp.scale)
+        if (fullImageSampleSize > 1) {
+            fullImageSampleSize /= 2
+        }
+
+        if (fullImageSampleSize == 1 && sRegion == null && sWidth() < maxTileDimensions.x && sHeight() < maxTileDimensions.y) {
+            // Whole image is required at native resolution, and is smaller than the canvas max bitmap size.
+            // Use BitmapDecoder for better image support.
+            decoder?.recycle()
+            decoder = null
+            val task = BitmapLoadTask(this, context, bitmapDecoderFactory, uri, false)
+            execute(task)
+        } else {
+            initialiseTileMap(maxTileDimensions)
+            tileMap?.get(fullImageSampleSize)?.let {
+                for (baseTile in it) {
+                    val task = TileLoadTask(this, decoder, baseTile)
+                    execute(task)
+                }
+            }
+            refreshRequiredTiles(true)
+        }
+    }
+
+    private fun execute(asyncTask: AsyncTask<Unit, Unit, *>) {
+        asyncTask.executeOnExecutor(executor)
+    }
+
+    /**
+     * Get source width taking rotation into account.
+     */
+    private fun sWidth(): Int {
+        val rotation: Int = getRequiredRotation()
+        if (rotation == 90 || rotation == 270) {
+            return sHeight
+        } else {
+            return sWidth
+        }
+    }
+
+    /**
+     * Get source height taking rotation into account.
+     */
+    private fun sHeight(): Int {
+        val rotation: Int = getRequiredRotation()
+        if (rotation == 90 || rotation == 270) {
+            return sWidth
+        } else {
+            return sHeight
+        }
+    }
+
+    /**
+     * Check whether either the full size bitmap or base layer tiles are loaded. First time, send image
+     * loaded event to listener.
+     */
+    private fun checkImageLoaded(): Boolean {
+        val imageLoaded: Boolean = isBaseLayerReady()
+        if (!imageLoadedSent && imageLoaded) {
+            preDraw()
+            imageLoadedSent = true
+            onImageLoaded()
+            onImageEventListener?.onImageLoaded()
+        }
+        return imageLoaded
+    }
+
     private fun checkReady(): Boolean {
         val ready = width > 0 && height > 0 && sWidth > 0 && sHeight > 0 && (bitmap != null || isBaseLayerReady())
         if (!readySent && ready) {
@@ -696,6 +775,31 @@ class SubsamplingScaleImageView : View {
             onImageEventListener?.onReady()
         }
         return ready
+    }
+
+    /**
+     * Sets scale and translate ready for the next draw.
+     */
+    private fun preDraw() {
+        if (width == 0 || height == 0 || sWidth <= 0 || sHeight <= 0) {
+            return
+        }
+        // If waiting to translate to new center position, set translate now
+        if (sPendingCenter != null && pendingScale != null) {
+            scale = pendingScale!!
+            if (vTranslate == null) {
+                vTranslate = PointF()
+            }
+            vTranslate!!.x = width / 2 - scale * sPendingCenter!!.x
+            vTranslate!!.y = height / 2 - scale * sPendingCenter!!.y
+            sPendingCenter = null
+            pendingScale = null
+            fitToBounds(true)
+            refreshRequiredTiles(ture)
+        }
+
+        // On first display of base image set up position, and in other cases make sure scale is correct.
+        fitToBounds(false)
     }
 
     /**
@@ -877,6 +981,15 @@ class SubsamplingScaleImageView : View {
          * This is useful if you wish to manage the bitmap after the preview is shown
          */
         fun onPreviewReleased()
+    }
+
+    /**
+     * Called once when the view is initialised, has dimensions, and will display an image on the
+     * next draw. This is triggered at the same time as {@link OnImageEventListener#onReady()} but
+     * allows a subclass to receive this event without using a listener.
+     */
+    open fun onReady() {
+
     }
 
 }
