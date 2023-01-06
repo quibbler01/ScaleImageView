@@ -2,7 +2,6 @@ package cn.quibbler.scaleimageview
 
 import android.content.ContentResolver
 import android.content.Context
-import android.content.Intent
 import android.graphics.*
 import android.net.Uri
 import android.os.AsyncTask
@@ -16,6 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import androidx.annotation.AnyThread
 import cn.quibbler.scaleimageview.decoder.*
+import cn.quibbler.scaleimageview.decoder.ImageDecoder
 import java.lang.ref.WeakReference
 import java.util.*
 import java.util.concurrent.locks.ReadWriteLock
@@ -925,6 +925,68 @@ class SubsamplingScaleImageView : View {
     private fun debug(message: String, vararg args: Any?) {
         if (debug) {
             Log.d(TAG, String.format(message, args))
+        }
+    }
+
+    /**
+     * Async task used to load bitmap without blocking the UI thread.
+     */
+    private class BitmapLoadTask : AsyncTask<Unit, Unit, Int?> {
+
+        private val viewRef: WeakReference<SubsamplingScaleImageView?>
+        private val contextRef: WeakReference<Context?>
+        private val decoderFactoryRef: WeakReference<DecoderFactory<out ImageDecoder>?>
+        private val source: Uri
+        private val preview: Boolean
+        private var bitmap: Bitmap? = null
+        private var exception: Exception? = null
+
+        constructor(view: SubsamplingScaleImageView?, context: Context?, decoderFactory: DecoderFactory<out ImageDecoder>?, source: Uri, preview: Boolean) {
+            this.viewRef = WeakReference(view)
+            this.contextRef = WeakReference(context)
+            this.decoderFactoryRef = WeakReference(decoderFactory)
+            this.source = source
+            this.preview = preview
+        }
+
+        override fun doInBackground(vararg params: Unit?): Int? {
+            try {
+                val sourceUri: String = source.toString()
+                val context: Context? = contextRef.get()
+                val decoderFactory: DecoderFactory<out ImageDecoder?>? = decoderFactoryRef.get()
+                val view = viewRef.get()
+                if (context != null && decoderFactory != null && view != null) {
+                    view.debug("BitmapLoadTask.doInBackground")
+                    bitmap = decoderFactory.make()?.decode(context, source)
+                    return view.getExifOrientation(context, sourceUri)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load bitmap", e)
+                this.exception = e
+            } catch (e: OutOfMemoryError) {
+                Log.e(TAG, "Failed to load bitmap - OutOfMemoryError", e)
+                this.exception = RuntimeException(e)
+            }
+            return null
+        }
+
+        override fun onPostExecute(orientation: Int?) {
+            val subsamplingScaleImageView = viewRef.get()
+            subsamplingScaleImageView?.let {
+                if (bitmap != null && orientation != null) {
+                    if (preview) {
+                        it.onPreviewLoaded(bitmap)
+                    } else {
+                        it.onImageLoaded(bitmap, orientation, false)
+                    }
+                } else if (exception != null) {
+                    if (preview) {
+                        it.onImageEventListener?.onPreviewLoadError(exception)
+                    } else {
+                        it.onImageEventListener?.onImageLoadError(exception)
+                    }
+                }
+            }
         }
     }
 
