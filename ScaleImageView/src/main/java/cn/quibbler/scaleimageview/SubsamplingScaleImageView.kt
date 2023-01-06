@@ -991,6 +991,58 @@ class SubsamplingScaleImageView : View {
     }
 
     /**
+     * Called by worker task when preview image is loaded.
+     */
+    private fun onPreviewLoaded(previewBitmap: Bitmap) {
+        debug("onPreviewLoaded")
+        if (bitmap != null || imageLoadedSent) {
+            previewBitmap.recycle()
+            return
+        }
+        if (pRegion != null) {
+            bitmap = Bitmap.createBitmap(previewBitmap, pRegion!!.left, pRegion!!.top, pRegion!!.width(), pRegion!!.height())
+        } else {
+            bitmap = previewBitmap
+        }
+        bitmapIsPreview = true
+        if (checkReady()) {
+            invalidate()
+            requestLayout()
+        }
+    }
+
+    /**
+     * Called by worker task when full size image bitmap is ready (tiling is disabled).
+     */
+    @Synchronized
+    private fun onImageLoaded(bitmap: Bitmap, sOrientation: Int, bitmapIsCached: Boolean) {
+        debug("onImageLoaded")
+        if (this.sWidth > 0 && this.sHeight > 0 && (this.sWidth != bitmap.width || this.sHeight != bitmap.height)) {
+            reset(false)
+        }
+        if (this.bitmap != null && !this.bitmapIsCached) {
+            this.bitmap?.recycle()
+        }
+
+        if (this.bitmap != null && this.bitmapIsCached) {
+            onImageEventListener?.onPreviewReleased()
+        }
+
+        this.bitmapIsPreview = false
+        this.bitmapIsCached = bitmapIsCached
+        this.bitmap = bitmap
+        this.sWidth = bitmap.width
+        this.sHeight = bitmap.height
+        this.sOrientation = sOrientation
+        val ready = checkReady()
+        val imageLoaded = checkImageLoaded()
+        if (ready || imageLoaded) {
+            invalidate()
+            requestLayout()
+        }
+    }
+
+    /**
      * An event listener, allowing subclasses and activities to be notified of significant events.
      */
     public interface OnImageEventListener {
