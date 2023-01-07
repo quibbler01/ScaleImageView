@@ -367,6 +367,69 @@ class SubsamplingScaleImageView : View {
         setImage(imageSource, previewSource, null)
     }
 
+    fun setPanEnabled(panEnabled: Boolean) {
+        this.panEnabled = panEnabled
+        if (!panEnabled) {
+            vTranslate?.let {
+                it.x = width / 2 - (scale * (sWidth() / 2))
+                it.y = height / 2 - (scale * (sHeight() / 2))
+                if (isReady()) {
+                    refreshRequiredTiles(true)
+                    invalidate()
+                }
+            }
+        }
+    }
+
+    /**
+     * Loads the optimum tiles for display at the current scale and translate, so the screen can be filled with tiles
+     * that are at least as high resolution as the screen. Frees up bitmaps that are now off the screen.
+     * @param load Whether to load the new tiles needed. Use false while scrolling/panning for performance.
+     */
+    private fun refreshRequiredTiles(load: Boolean) {
+        if (decoder == null || tileMap == null) return
+
+        val sampleSize: Int = min(fullImageSampleSize, calculateInSampleSize(scale))
+
+        // Load tiles of the correct sample size that are on screen. Discard tiles off screen, and those that are higher
+        // resolution than required, or lower res than required but not the base layer, so the base layer is always present.
+        for (tileMapEntry in tileMap!!.entries) {
+            for (tile in tileMapEntry.value) {
+                if (tile.sampleSize < sampleSize || (tile.sampleSize > sampleSize && tile.sampleSize != fullImageSampleSize)) {
+                    tile.visible = false
+                    tile.bitmap?.recycle()
+                    tile.bitmap = null
+                }
+                if (tile.sampleSize == sampleSize) {
+                    if (tileVisible(tile)) {
+                        tile.visible = true
+                        if (!tile.loading && tile.bitmap != null && load) {
+                            val task = TileLoadTask(this, decoder, tile)
+                            execute(task)
+                        }
+                    } else if (tile.sampleSize != fullImageSampleSize) {
+                        tile.visible = false
+                        tile.bitmap?.recycle()
+                        tile.bitmap = null
+                    }
+                } else if (tile.sampleSize == fullImageSampleSize) {
+                    tile.visible = true
+                }
+            }
+        }
+    }
+
+    /**
+     * Call to find whether the view is initialised, has dimensions, and will display an image on
+     * the next draw. If a preview has been provided, it may be the preview that will be displayed
+     * and the full size image may still be loading. If no preview was provided, this is called once
+     * the base layer tiles of the full size image are loaded.
+     * @return true if the view is ready to display an image and accept touch gestures.
+     */
+    fun isReady(): Boolean {
+        return readySent
+    }
+
     /**
      * Set the image source from a bitmap, resource, asset, file or other URI, providing a preview image to be
      * displayed until the full size image is loaded, starting with a given orientation setting, scale and center.
