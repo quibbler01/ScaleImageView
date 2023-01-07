@@ -23,6 +23,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.round
 
 /**
  * <p>
@@ -159,7 +160,7 @@ class SubsamplingScaleImageView : View {
     private var minScale: Float = minScale()
 
     // Density to reach before loading higher resolution tiles
-    private var minimumTileDpiv = -1
+    private var minimumTileDpi = -1
 
     // Pan limiting style
     private var panLimit = PAN_LIMIT_INSIDE
@@ -420,6 +421,56 @@ class SubsamplingScaleImageView : View {
     }
 
     /**
+     * Calculates sample size to fit the source image in given bounds.
+     */
+    private fun calculateInSampleSize(scale_: Float): Int {
+        var scale = scale_
+        if (minimumTileDpi > 0) {
+            val metrics = resources.displayMetrics
+            val averageDpi = (metrics.xdpi + metrics.ydpi) / 2
+            scale *= (minimumTileDpi / averageDpi)
+        }
+
+        val reqWidth = (sWidth() * scale).toInt()
+        val reqHeight = (sHeight() * scale).toInt()
+
+        // Raw height and width of image
+        var inSampleSize = 1
+        if (reqWidth == 0 || reqHeight == 0) {
+            return 32
+        }
+
+        if (sHeight() > reqHeight || sWidth() > reqWidth) {
+            // Calculate ratios of height and width to requested height and width
+            val heightRatio = round(sHeight().toFloat() / reqHeight.toFloat()).toInt()
+            val widthRatio = round(sWidth().toFloat() / reqWidth.toFloat()).toInt()
+
+            // Choose the smallest ratio as inSampleSize value, this will guarantee
+            // a final image with both dimensions larger than or equal to the
+            // requested height and width.
+            inSampleSize = min(heightRatio, widthRatio)
+        }
+
+        // We want the actual sample size that will be used, so round down to nearest power of 2.
+        var power = 1
+        while (power * 2 < inSampleSize) {
+            power *= 2
+        }
+        return power
+    }
+
+    /**
+     * Determine whether tile is visible.
+     */
+    private fun tileVisible(tile: Tile): Boolean {
+        val sVisLeft: Float = viewToSourceX(0f)
+        val sVisRight: Float = viewToSourceX(width.toFloat())
+        val sVisTop: Float = viewToSourceY(0f)
+        val sVisBottom: Float = viewToSourceY(height.toFloat())
+        return !(sVisLeft > tile.sRect.right || tile.sRect.left > sVisRight || sVisTop > tile.sRect.bottom || tile.sRect.top > sVisBottom)
+    }
+
+    /**
      * Call to find whether the view is initialised, has dimensions, and will display an image on
      * the next draw. If a preview has been provided, it may be the preview that will be displayed
      * and the full size image may still be loading. If no preview was provided, this is called once
@@ -616,7 +667,7 @@ class SubsamplingScaleImageView : View {
     }
 
     private class Tile {
-        var sRect: Rect? = null
+        var sRect: Rect = Rect()
         var sampleSize = 0
         var bitmap: Bitmap? = null
         var loading = false
@@ -924,7 +975,7 @@ class SubsamplingScaleImageView : View {
     fun setMinimumTileDpi(minimumTileDpi: Int) {
         val metrics = resources.displayMetrics
         val averageDpi: Float = (metrics.xdpi + metrics.ydpi) / 2
-        this.minimumTileDpiv = min(averageDpi, minimumTileDpi.toFloat()).toInt()
+        this.minimumTileDpi = min(averageDpi, minimumTileDpi.toFloat()).toInt()
         if (readySent) {
             reset(false)
             invalidate()
