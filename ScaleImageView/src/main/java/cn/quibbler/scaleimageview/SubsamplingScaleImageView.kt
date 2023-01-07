@@ -675,7 +675,7 @@ class SubsamplingScaleImageView : View {
 
         // Volatile fields instantiated once then updated before use to reduce GC.
         var vRect: Rect? = null
-        var fileSRect: Rect? = null
+        var fileSRect: Rect = Rect()
     }
 
     private class Anim {
@@ -1089,9 +1089,9 @@ class SubsamplingScaleImageView : View {
             subsamplingScaleImageView?.let {
                 if (bitmap != null && orientation != null) {
                     if (preview) {
-                        it.onPreviewLoaded(bitmap)
+                        it.onPreviewLoaded(bitmap!!)
                     } else {
-                        it.onImageLoaded(bitmap, orientation, false)
+                        it.onImageLoaded(bitmap!!, orientation, false)
                     }
                 } else if (exception != null) {
                     if (preview) {
@@ -1178,6 +1178,143 @@ class SubsamplingScaleImageView : View {
          * @param origin Where the event originated from - one of {@link #ORIGIN_ANIM}, {@link #ORIGIN_TOUCH}.
          */
         fun onCenterChanged(newCenter: PointF, origin: Int)
+    }
+
+    /**
+     * Async task used to load images without blocking the UI thread.
+     */
+    private class TileLoadTask : AsyncTask<Unit, Unit, Bitmap?> {
+
+        private val viewRef: WeakReference<SubsamplingScaleImageView>
+        private val decoderRef: WeakReference<ImageRegionDecoder>
+        private val tileRef: WeakReference<Tile>
+        private var exception: Exception? = null
+
+        constructor(view: SubsamplingScaleImageView, decoder: ImageRegionDecoder, tile: Tile) {
+            this.viewRef = WeakReference(view)
+            this.decoderRef = WeakReference(decoder)
+            this.tileRef = WeakReference(tile)
+            tile.loading = true
+        }
+
+        override fun doInBackground(vararg params: Unit?): Bitmap? {
+            try {
+                val view = viewRef.get()
+                val decoder = decoderRef.get()
+                val tile = tileRef.get()
+                if (decoder != null && tile != null && view != null && decoder.isReady() && tile.visible) {
+                    view.debug("TileLoadTask.doInBackground, tile.sRect=%s, tile.sampleSize=%d", tile.sRect, tile.sampleSize);
+                    view.decoderLock.readLock().lock()
+                    try {
+                        if (decoder.isReady()) {
+                            // Update tile's file sRect according to rotation
+                            view.fileSRect(tile.sRect, tile.fileSRect)
+                            view.sRegion?.let {
+                                tile.fileSRect?.offset(it.left, it.top)
+                            }
+                            return decoder.decodeRegion(tile.fileSRect, tile.sampleSize)
+                        } else {
+                            tile.loading = false
+                        }
+                    } finally {
+                        view.decoderLock.readLock().unlock()
+                    }
+                } else if (tile != null) {
+                    tile.loading = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to decode tile", e)
+                this.exception = e
+            } catch (e: OutOfMemoryError) {
+                Log.e(TAG, "Failed to decode tile - OutOfMemoryError", e)
+                this.exception = RuntimeException(e)
+            }
+            return null
+        }
+
+        override fun onPostExecute(bitmap: Bitmap?) {
+            val subsamplingScaleImageView = viewRef.get()
+            val tile = tileRef.get()
+            if (subsamplingScaleImageView != null && tile != null) {
+                if (bitmap != null) {
+                    tile.bitmap = bitmap
+                    tile.loading = false
+                    subsamplingScaleImageView.onTileLoaded()
+                } else if (exception != null) {
+                    subsamplingScaleImageView.onImageEventListener?.onTileLoadError(exception)
+                }
+            }
+        }
+
+    }
+
+    /**
+     * Converts source rectangle from tile, which treats the image file as if it were in the correct orientation already,
+     * to the rectangle of the image that needs to be loaded.
+     */
+    @AnyThread
+    private fun fileSRect(sRect: Rect, target: Rect) {
+        if (getRequiredRotation() == 0) {
+            target.set(sRect)
+        } else if (getRequiredRotation() == 90) {
+            target.set(sRect.top, sHeight - sRect.right, sRect.bottom, sHeight - sRect.left)
+        } else if (getRequiredRotation() == 180) {
+            target.set(sWidth - sRect.right, sHeight - sRect.bottom, sWidth - sRect.left, sHeight - sRect.top)
+        } else {
+            target.set(sWidth - sRect.bottom, sRect.left, sWidth - sRect.top, sRect.right)
+        }
+    }
+
+    private fun getRequiredRotation(): Int {
+        return if (orientation == ORIENTATION_USE_EXIF) {
+            sOrientation
+        } else {
+            orientation
+        }
+    }
+
+    /**
+     * Called by worker task when a tile has loaded. Redraws the view.
+     */
+    @Synchronized
+    private fun onTileLoaded() {
+        debug("onTileLoaded")
+        checkReady()
+        checkImageLoaded()
+        if (isBaseLayerReady() && bitmap != null) {
+            if (!bitmapIsCached) {
+                bitmap?.recycle()
+            }
+            bitmap = null
+            if (bitmapIsCached) {
+                onImageEventListener?.onPreviewReleased()
+            }
+            bitmapIsPreview = false
+            bitmapIsCached = false
+        }
+        invalidate()
+    }
+
+    /**
+     * Checks whether the base layer of tiles or full size bitmap is ready.
+     */
+    private fun isBaseLayerReady(): Boolean {
+        if (bitmap != null && !bitmapIsPreview) {
+            return true
+        } else if (tileMap != null) {
+            var baseLayerReady = true
+            for (tileMapEntry in tileMap!!.entries) {
+                if (tileMapEntry.key == fullImageSampleSize) {
+                    for (tile in tileMapEntry.value) {
+                        if (tile.loading || tile.bitmap == null) {
+                            baseLayerReady = false
+                        }
+                    }
+                }
+            }
+            return baseLayerReady
+        }
+        return false
     }
 
     /**
