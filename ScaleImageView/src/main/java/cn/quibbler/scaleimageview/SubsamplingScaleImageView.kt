@@ -917,6 +917,82 @@ class SubsamplingScaleImageView : View {
     }
 
     /**
+     * Adjusts hypothetical future scale and translate values to keep scale within the allowed range and the image on screen. Minimum scale
+     * is set so one dimension fills the view and the image is centered on the other dimension. Used to calculate what the target of an
+     * animation should be.
+     * @param center Whether the image should be centered in the dimension it's too small to fill. While animating this can be false to avoid changes in direction as bounds are reached.
+     * @param sat The scale we want and the translation we're aiming for. The values are adjusted to be valid.
+     */
+    private fun fitToBounds(center_: Boolean, sat: ScaleAndTranslate) {
+        var center = center_
+        if (panLimit == PAN_LIMIT_OUTSIDE && isReady()) {
+            center = false
+        }
+
+        val vTranslate: PointF = sat.vTranslate
+        val scale: Float = limitedScale(sat.scale)
+        val scaleWidth = scale * sWidth()
+        val scaleHeight = scale * sHeight()
+
+        if (panLimit == PAN_LIMIT_CENTER && isReady()) {
+            vTranslate.x = max(vTranslate.x, width / 2 - scaleWidth)
+            vTranslate.y = max(vTranslate.y, height / 2 - scaleHeight)
+        } else if (center) {
+            vTranslate.x = max(vTranslate.x, width - scaleWidth)
+            vTranslate.y = max(vTranslate.y, height - scaleHeight)
+        } else {
+            vTranslate.x = max(vTranslate.x, -scaleWidth)
+            vTranslate.y = max(vTranslate.y, -scaleHeight)
+        }
+
+        // Asymmetric padding adjustments
+        val xPaddingRatio = if (paddingLeft > 0 || paddingRight > 0) paddingLeft.toFloat() / (paddingLeft + paddingRight).toFloat() else 0.5f
+        val yPaddingRatio = if (paddingTop > 0 || paddingBottom > 0) paddingTop.toFloat() / (paddingTop + paddingBottom).toFloat() else 0.5f
+
+        var maxTx = 0f
+        var maxTy = 0f
+        if (panLimit == PAN_LIMIT_CENTER && isReady()) {
+            maxTx = max(0f, width.toFloat() / 2)
+            maxTy = max(0f, height.toFloat() / 2)
+        } else if (center) {
+            maxTx = max(0f, (width - scaleWidth) * xPaddingRatio)
+            maxTy = max(0f, (height - scaleHeight) * yPaddingRatio)
+        } else {
+            maxTx = max(0f, width.toFloat())
+            maxTy = max(0f, height.toFloat())
+        }
+
+        vTranslate.x = min(vTranslate.x, maxTx)
+        vTranslate.y = min(vTranslate.y, maxTy)
+
+        sat.scale = scale
+    }
+
+    /**
+     * Adjusts current scale and translate values to keep scale within the allowed range and the image on screen. Minimum scale
+     * is set so one dimension fills the view and the image is centered on the other dimension.
+     * @param center Whether the image should be centered in the dimension it's too small to fill. While animating this can be false to avoid changes in direction as bounds are reached.
+     */
+    private fun fitToBouns(center: Boolean) {
+        var init = false
+        if (vTranslate == null) {
+            init = true
+            vTranslate = PointF(0f, 0f)
+        }
+        if (satTemp == null) {
+            satTemp = ScaleAndTranslate(0f, PointF(0f, 0f))
+        }
+        satTemp.scale = scale
+        satTemp.vTranslate.set(vTranslate)
+        fitToBounds(center, satTemp)
+        scale = satTemp.scale
+        vTranslate.set(satTemp.vTranslate)
+        if (init && minimumScaleType != SCALE_TYPE_START) {
+            vTranslate.set(vTranslateForSCenter(sWidth() / 2, sHeight() / 2, scale));
+        }
+    }
+
+    /**
      * An event listener for animations, allows events to be triggered when an animation completes,
      * is aborted by another animation starting, or is aborted by a touch event. Note that none of
      * these events are triggered if the activity is paused, the image is swapped, or in other cases
