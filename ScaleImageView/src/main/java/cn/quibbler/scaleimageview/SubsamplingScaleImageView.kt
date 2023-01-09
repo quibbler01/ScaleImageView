@@ -809,11 +809,11 @@ class SubsamplingScaleImageView : View {
     private fun initialiseBaseLayer(maxTileDimensions: Point) {
         debug("initialiseBaseLayer maxTileDimensions=%dx%d", maxTileDimensions.x, maxTileDimensions.y)
         satTemp = ScaleAndTranslate(0f, PointF(0f, 0f))
-        fitToBounds(true, satTemp)
+        fitToBounds(true, satTemp!!)
 
         // Load double resolution - next level will be split into four tiles and at the center all four are required,
         // so don't bother with tiling until the next level 16 tiles are needed.
-        fullImageSampleSize = calculateInSampleSize(satTemp.scale)
+        fullImageSampleSize = calculateInSampleSize(satTemp!!.scale)
         if (fullImageSampleSize > 1) {
             fullImageSampleSize /= 2
         }
@@ -1255,6 +1255,8 @@ class SubsamplingScaleImageView : View {
          */
         fun onCenterChanged(newCenter: PointF, origin: Int)
     }
+
+    private class ScaleAndTranslate(var scale: Float, val vTranslate: PointF)
 
     /**
      * Async task used to load images without blocking the UI thread.
