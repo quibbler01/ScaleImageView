@@ -2,11 +2,14 @@ package cn.quibbler.scaleimageview
 
 import android.content.ContentResolver
 import android.content.Context
+import android.database.Cursor
 import android.graphics.*
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.AsyncTask
 import android.os.Handler
 import android.os.Message
+import android.provider.MediaStore
 import android.util.AttributeSet
 import android.util.Log
 import android.util.TypedValue
@@ -20,6 +23,8 @@ import java.lang.ref.WeakReference
 import java.util.*
 import java.util.concurrent.locks.ReadWriteLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.collections.ArrayList
+import kotlin.collections.LinkedHashMap
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -127,7 +132,8 @@ class SubsamplingScaleImageView : View {
         private const val MESSAGE_LONG_CLICK = 1
 
         // A global preference for bitmap format, available to decoder classes that respect it
-        private var preferredBitmapConfig: Bitmap.Config? = null
+        var preferredBitmapConfig: Bitmap.Config? = null
+            private set
     }
 
     // Bitmap (preview or full image)
@@ -837,6 +843,56 @@ class SubsamplingScaleImageView : View {
         }
     }
 
+    /**
+     * Once source image and view dimensions are known, creates a map of sample size to tile grid.
+     */
+    private fun initialiseTileMap(maxTileDimensions: Point) {
+        debug("initialiseTileMap maxTileDimensions=%dx%d", maxTileDimensions.x, maxTileDimensions.y);
+        this.tileMap = LinkedHashMap()
+        var sampleSize = fullImageSampleSize
+        var xTiles = 1
+        var yTiles = 1
+        while (true) {
+            var sTileWidth = sWidth() / xTiles
+            var sTileHeight = sHeight() / yTiles
+            var subTileWidth = sTileWidth / sampleSize
+            var subTileHeight = sTileHeight / sampleSize
+            while (subTileWidth + xTiles + 1 > maxTileDimensions.x || (subTileWidth > getWidth() * 1.25 && sampleSize < fullImageSampleSize)) {
+                xTiles += 1;
+                sTileWidth = sWidth() / xTiles;
+                subTileWidth = sTileWidth / sampleSize;
+            }
+            while (subTileHeight + yTiles + 1 > maxTileDimensions.y || (subTileHeight > getHeight() * 1.25 && sampleSize < fullImageSampleSize)) {
+                yTiles += 1;
+                sTileHeight = sHeight() / yTiles;
+                subTileHeight = sTileHeight / sampleSize;
+            }
+            val tileGrid = ArrayList<Tile>(xTiles * yTiles)
+            for (x in 0 until xTiles) {
+                for (y in 0 until yTiles) {
+                    val tile = Tile()
+                    tile.sampleSize = sampleSize
+                    tile.visible = sampleSize == fullImageSampleSize
+                    tile.sRect = Rect(
+                        x * sTileWidth,
+                        y * sTileHeight,
+                        if (x == xTiles - 1) sWidth() else (x + 1) * sTileWidth,
+                        if (y == yTiles - 1) sHeight() else (y + 1) * sTileHeight
+                    )
+                    tile.vRect = Rect(0, 0, 0, 0)
+                    tile.fileSRect = Rect(tile.sRect)
+                    tileGrid.add(tile)
+                }
+            }
+            tileMap?.put(sampleSize, tileGrid)
+            if (sampleSize == 1) {
+                break
+            } else {
+                sampleSize /= 2
+            }
+        }
+    }
+
     private fun execute(asyncTask: AsyncTask<Unit, Unit, *>) {
         asyncTask.executeOnExecutor(executor)
     }
@@ -1116,6 +1172,56 @@ class SubsamplingScaleImageView : View {
         if (debug) {
             Log.d(TAG, String.format(message, args))
         }
+    }
+
+    /**
+     * Helper method for load tasks. Examines the EXIF info on the image file to determine the orientation.
+     * This will only work for external files, not assets, resources or other URIs.
+     */
+    @AnyThread
+    private fun getExifOrientation(context: Context, sourceUri: String?): Int {
+        var exifOrientation = ORIENTATION_0
+        if (sourceUri?.startsWith(ContentResolver.SCHEME_CONTENT) == true) {
+            var cursor: Cursor? = null
+            try {
+                val columns = arrayOf(MediaStore.Images.Media.ORIENTATION)
+                cursor = context.contentResolver.query(Uri.parse(sourceUri), columns, null, null, null)
+                cursor?.let {
+                    if (it.moveToFirst()) {
+                        val orientation = cursor.getInt(0)
+                        if (VALID_ORIENTATIONS.contains(orientation) && orientation != ORIENTATION_USE_EXIF) {
+                            exifOrientation = orientation;
+                        } else {
+                            Log.w(TAG, "Unsupported orientation: $orientation");
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not get orientation of image from media store")
+            } finally {
+                cursor?.close()
+            }
+
+        } else if (sourceUri?.startsWith(ImageSource.FILE_SCHEME) == true) {
+            try {
+                val exifInterface = ExifInterface(sourceUri.substring(ImageSource.FILE_SCHEME.length - 1))
+                val orientationAttr = exifInterface.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+                if (orientationAttr == ExifInterface.ORIENTATION_NORMAL || orientationAttr == ExifInterface.ORIENTATION_UNDEFINED) {
+                    exifOrientation = ORIENTATION_0
+                } else if (orientationAttr == ExifInterface.ORIENTATION_ROTATE_90) {
+                    exifOrientation = ORIENTATION_90
+                } else if (orientationAttr == ExifInterface.ORIENTATION_ROTATE_180) {
+                    exifOrientation = ORIENTATION_180
+                } else if (orientationAttr == ExifInterface.ORIENTATION_ROTATE_270) {
+                    exifOrientation = ORIENTATION_270
+                } else {
+                    Log.w(TAG, "Unsupported EXIF orientation: $orientationAttr")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not get EXIF orientation of image")
+            }
+        }
+        return exifOrientation
     }
 
     /**

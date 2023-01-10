@@ -21,7 +21,7 @@ class SkiaImageDecoder(bitmapConfig: Bitmap.Config? = null) : ImageDecoder {
     private val bitmapConfig: Bitmap.Config
 
     init {
-        val globalBitmapConfig: Bitmap.Config? = SubsamplingScaleImageView.getPreferredBitmapConfig()
+        val globalBitmapConfig: Bitmap.Config? = SubsamplingScaleImageView.preferredBitmapConfig
         if (bitmapConfig != null) {
             this.bitmapConfig = bitmapConfig
         } else if (globalBitmapConfig != null) {
