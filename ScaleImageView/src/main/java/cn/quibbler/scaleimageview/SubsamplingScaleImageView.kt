@@ -23,8 +23,6 @@ import java.lang.ref.WeakReference
 import java.util.*
 import java.util.concurrent.locks.ReadWriteLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.collections.ArrayList
-import kotlin.collections.LinkedHashMap
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -1029,7 +1027,7 @@ class SubsamplingScaleImageView : View {
      * is set so one dimension fills the view and the image is centered on the other dimension.
      * @param center Whether the image should be centered in the dimension it's too small to fill. While animating this can be false to avoid changes in direction as bounds are reached.
      */
-    private fun fitToBouns(center: Boolean) {
+    private fun fitToBounds(center: Boolean) {
         var init = false
         if (vTranslate == null) {
             init = true
@@ -1038,14 +1036,33 @@ class SubsamplingScaleImageView : View {
         if (satTemp == null) {
             satTemp = ScaleAndTranslate(0f, PointF(0f, 0f))
         }
-        satTemp.scale = scale
-        satTemp.vTranslate.set(vTranslate)
-        fitToBounds(center, satTemp)
-        scale = satTemp.scale
-        vTranslate.set(satTemp.vTranslate)
-        if (init && minimumScaleType != SCALE_TYPE_START) {
-            vTranslate.set(vTranslateForSCenter(sWidth() / 2, sHeight() / 2, scale));
+        satTemp?.let {
+            it.scale = scale
+            it.vTranslate.set(vTranslate!!)
+            fitToBounds(center, it)
+            scale = it.scale
+            vTranslate?.set(it.vTranslate)
+            if (init && minimumScaleType != SCALE_TYPE_START) {
+                vTranslate!!.set(vTranslateForSCenter(sWidth() / 2, sHeight() / 2, scale));
+            }
         }
+    }
+
+    /**
+     * Get the translation required to place a given source coordinate at the center of the screen, with the center
+     * adjusted for asymmetric padding. Accepts the desired scale as an argument, so this is independent of current
+     * translate and scale. The result is fitted to bounds, putting the image point as near to the screen center as permitted.
+     */
+    private fun vTranslateForSCenter(sCenterX: Float, sCenterY: Float, scale: Float): PointF {
+        val vxCenter = paddingLeft + (width - paddingRight - paddingLeft) / 2
+        val vyCenter = paddingTop + (height - paddingBottom - paddingTop) / 2
+        if (satTemp == null) {
+            satTemp = ScaleAndTranslate(0f, PointF(0f, 0f))
+        }
+        satTemp!!.scale = scale
+        satTemp!!.vTranslate.set(vxCenter - (sCenterX * scale), vyCenter - (sCenterY * scale))
+        fitToBounds(true, satTemp!!)
+        return satTemp!!.vTranslate
     }
 
     /**
