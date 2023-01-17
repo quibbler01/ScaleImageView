@@ -683,31 +683,31 @@ class SubsamplingScaleImageView : View {
     }
 
     private class Anim {
-        private val scaleStart = 0f// Scale at start of anim
+        var scaleStart = 0f// Scale at start of anim
 
-        private val scaleEnd = 0f // Scale at end of anim (target)
+        var scaleEnd = 0f // Scale at end of anim (target)
 
-        private val sCenterStart: PointF? = null // Source center point at start
+        var sCenterStart: PointF? = null // Source center point at start
 
-        private val sCenterEnd: PointF? = null // Source center point at end, adjusted for pan limits
+        var sCenterEnd: PointF? = null // Source center point at end, adjusted for pan limits
 
-        private val sCenterEndRequested: PointF? = null // Source center point that was requested, without adjustment
+        var sCenterEndRequested: PointF? = null // Source center point that was requested, without adjustment
 
-        private val vFocusStart: PointF? = null // View point that was double tapped
+        var vFocusStart: PointF? = null // View point that was double tapped
 
-        private val vFocusEnd: PointF? = null // Where the view focal point should be moved to during the anim
+        var vFocusEnd: PointF? = null // Where the view focal point should be moved to during the anim
 
-        private val duration: Long = 500 // How long the anim takes
+        var duration: Long = 500 // How long the anim takes
 
-        private val interruptible = true // Whether the anim can be interrupted by a touch
+        var interruptible = true // Whether the anim can be interrupted by a touch
 
-        private val easing = EASE_IN_OUT_QUAD // Easing style
+        var easing = EASE_IN_OUT_QUAD // Easing style
 
-        private val origin = ORIGIN_ANIM // Animation origin (API, double tap or fling)
+        var origin = ORIGIN_ANIM // Animation origin (API, double tap or fling)
 
-        private val time = System.currentTimeMillis() // Start time
+        var time = System.currentTimeMillis() // Start time
 
-        private val listener: OnAnimationEventListener? = null // Event listener
+        var listener: OnAnimationEventListener? = null // Event listener
 
     }
 
@@ -872,10 +872,10 @@ class SubsamplingScaleImageView : View {
                     tile.sampleSize = sampleSize
                     tile.visible = sampleSize == fullImageSampleSize
                     tile.sRect = Rect(
-                        x * sTileWidth,
-                        y * sTileHeight,
-                        if (x == xTiles - 1) sWidth() else (x + 1) * sTileWidth,
-                        if (y == yTiles - 1) sHeight() else (y + 1) * sTileHeight
+                            x * sTileWidth,
+                            y * sTileHeight,
+                            if (x == xTiles - 1) sWidth() else (x + 1) * sTileWidth,
+                            if (y == yTiles - 1) sHeight() else (y + 1) * sTileHeight
                     )
                     tile.vRect = Rect(0, 0, 0, 0)
                     tile.fileSRect = Rect(tile.sRect)
@@ -1066,6 +1066,164 @@ class SubsamplingScaleImageView : View {
     }
 
     /**
+     * Returns the source point at the center of the view.
+     * @return the source coordinates current at the center of the view.
+     */
+    fun getCenter(): PointF? {
+        val mX = width / 2
+        val mY = height / 2
+        return viewToSourceCoord(mX.toFloat(), mY.toFloat())
+    }
+
+    /**
+     * Builder class used to set additional options for a scale animation. Create an instance using {@link #animateScale(float)},
+     * then set your options and call {@link #start()}.
+     */
+    private inner class AnimationBuilder {
+
+        private val targetScale: Float
+        private val targetSCenter: PointF?
+        private val vFocus: PointF?
+        private var duration: Long = 500
+        private var easing = EASE_IN_OUT_QUAD
+        private var origin = ORIGIN_ANIM
+        private var interruptible = true
+        private var panLimited = true
+        private var listener: OnAnimationEventListener? = null
+
+        constructor(sCenter: PointF?) {
+            this.targetScale = scale
+            this.targetSCenter = sCenter
+            this.vFocus = null
+        }
+
+        constructor(scale: Float) {
+            this.targetScale = scale
+            this.targetSCenter = getCenter()
+            this.vFocus = null
+        }
+
+        constructor(scale: Float, sCenter: PointF?) {
+            this.targetScale = scale
+            this.targetSCenter = sCenter
+            this.vFocus = null
+        }
+
+        constructor(scale: Float, sCenter: PointF?, vFocus: PointF?) {
+            this.targetScale = scale
+            this.targetSCenter = sCenter
+            this.vFocus = vFocus
+        }
+
+        /**
+         * Desired duration of the anim in milliseconds. Default is 500.
+         * @param duration duration in milliseconds.
+         * @return this builder for method chaining.
+         */
+        fun withDuration(duration: Long): AnimationBuilder {
+            this.duration = duration
+            return this
+        }
+
+        /**
+         * Whether the animation can be interrupted with a touch. Default is true.
+         * @param interruptible interruptible flag.
+         * @return this builder for method chaining.
+         */
+        fun withInterruptible(interruptible: Boolean): AnimationBuilder {
+            this.interruptible = interruptible
+            return this
+        }
+
+        /**
+         * Set the easing style. See static fields. {@link #EASE_IN_OUT_QUAD} is recommended, and the default.
+         * @param easing easing style.
+         * @return this builder for method chaining.
+         */
+        fun withEasing(easing: Int): AnimationBuilder {
+            require(VALID_EASING_STYLES.contains(easing)) { "Unknown easing type: $easing" }
+            this.easing = easing
+            return this
+        }
+
+        /**
+         * Add an animation event listener.
+         * @param listener The listener.
+         * @return this builder for method chaining.
+         */
+        fun withOnAnimationEventListener(listener: OnAnimationEventListener?): AnimationBuilder {
+            this.listener = listener
+            return this
+        }
+
+        /**
+         * Only for internal use. When set to true, the animation proceeds towards the actual end point - the nearest
+         * point to the center allowed by pan limits. When false, animation is in the direction of the requested end
+         * point and is stopped when the limit for each axis is reached. The latter behaviour is used for flings but
+         * nothing else.
+         */
+        fun withPanLimited(panLimited: Boolean): AnimationBuilder {
+            this.panLimited = panLimited
+            return this
+        }
+
+        /**
+         * Only for internal use. Indicates what caused the animation.
+         */
+        fun withOrigin(origin: Int): AnimationBuilder {
+            this.origin = origin
+            return this
+        }
+
+        /**
+         * Starts the animation.
+         */
+        fun start() {
+            try {
+                anim?.listener?.onInterruptedByNewAnim()
+            } catch (e: java.lang.Exception) {
+                Log.w(TAG, "Error thrown by animation listener", e)
+            }
+
+            val vxCenter = paddingLeft + (width - paddingRight - paddingLeft) / 2
+            val vyCenter = paddingTop + (height - paddingBottom - paddingTop) / 2
+            val targetScale: Float = limitedScale(targetScale)
+            val targetSCenter = if (panLimited) limitedSCenter(targetSCenter!!.x, targetSCenter.y, targetScale, PointF()) else targetSCenter!!
+
+            anim = Anim().apply {
+                scaleStart = scale
+                scaleEnd = targetScale
+                time = System.currentTimeMillis()
+                sCenterEndRequested = targetSCenter
+                sCenterStart = getCenter()
+                sCenterEnd = targetSCenter
+                vFocusStart = sourceToViewCoord(targetSCenter)
+                vFocusEnd = PointF(vxCenter.toFloat(), vyCenter.toFloat())
+                duration = duration
+                interruptible = interruptible
+                easing = easing
+                origin = origin
+                time = System.currentTimeMillis()
+                listener = listener
+            }
+
+            vFocus?.let {
+                // Calculate where translation will be at the end of the anim
+                val vTranslateXEnd = it.x - targetScale * anim!!.sCenterStart!!.x
+                val vTranslateYEnd = it.y - targetScale * anim!!.sCenterStart!!.y
+                val satEnd = ScaleAndTranslate(targetScale, PointF(vTranslateXEnd, vTranslateYEnd))
+                // Fit the end translation into bounds
+                fitToBounds(true, satEnd)
+                // Adjust the position of the focus point at end so image will be in bounds
+                anim!!.vFocusEnd = PointF(vFocus.x + (satEnd.vTranslate.x - vTranslateXEnd), vFocus.y + (satEnd.vTranslate.y - vTranslateYEnd))
+            }
+
+            invalidate()
+        }
+
+    }
+
+    /**
      * An event listener for animations, allows events to be triggered when an animation completes,
      * is aborted by another animation starting, or is aborted by a touch event. Note that none of
      * these events are triggered if the activity is paused, the image is swapped, or in other cases
@@ -1154,6 +1312,16 @@ class SubsamplingScaleImageView : View {
     private fun viewToSourceY(vy: Float): Float {
         if (vTranslate == null) return Float.NaN
         return (vy - vTranslate!!.y) / scale
+    }
+
+    /**
+     * Convert screen coordinate to source coordinate.
+     * @param vx view X coordinate.
+     * @param vy view Y coordinate.
+     * @return a coordinate representing the corresponding source coordinate.
+     */
+    fun viewToSourceCoord(vx: Float, vy: Float): PointF? {
+        return viewToSourceCoord(vx, vy, PointF())
     }
 
     fun viewToSourceCoord(vx: Float, vy: Float, sTarget: PointF): PointF? {
