@@ -1043,7 +1043,7 @@ class SubsamplingScaleImageView : View {
             scale = it.scale
             vTranslate?.set(it.vTranslate)
             if (init && minimumScaleType != SCALE_TYPE_START) {
-                vTranslate!!.set(vTranslateForSCenter(sWidth() / 2, sHeight() / 2, scale));
+                vTranslate!!.set(vTranslateForSCenter((sWidth() / 2).toFloat(), (sHeight() / 2).toFloat(), scale));
             }
         }
     }
@@ -1069,11 +1069,95 @@ class SubsamplingScaleImageView : View {
      * Returns the source point at the center of the view.
      * @return the source coordinates current at the center of the view.
      */
-    fun getCenter(): PointF? {
+    fun getCenter(): PointF {
         val mX = width / 2
         val mY = height / 2
-        return viewToSourceCoord(mX.toFloat(), mY.toFloat())
+        return viewToSourceCoord(mX.toFloat(), mY.toFloat()) ?: PointF()
     }
+
+    /**
+     * Returns the minimum allowed scale.
+     */
+    private fun minScale(): Float {
+        val vPadding = paddingBottom + paddingTop
+        val hPadding = paddingLeft + paddingRight
+        return if (minimumScaleType == SCALE_TYPE_CENTER_CROP || minimumScaleType == SCALE_TYPE_START) {
+            Math.max((width - hPadding) / sWidth().toFloat(), (height - vPadding) / sHeight().toFloat())
+        } else if (minimumScaleType == SCALE_TYPE_CUSTOM && minScale > 0) {
+            minScale
+        } else {
+            Math.min((width - hPadding) / sWidth().toFloat(), (height - vPadding) / sHeight().toFloat())
+        }
+    }
+
+    /**
+     * Adjust a requested scale to be within the allowed limits.
+     */
+    private fun limitedScale(targetScale_: Float): Float {
+        var targetScale = targetScale_
+        targetScale = Math.max(minScale(), targetScale)
+        targetScale = Math.min(maxScale, targetScale)
+        return targetScale
+    }
+
+    /**
+     * Given a requested source center and scale, calculate what the actual center will have to be to keep the image in
+     * pan limits, keeping the requested center as near to the middle of the screen as allowed.
+     */
+    private fun limitedSCenter(sCenterX: Float, sCenterY: Float, scale: Float, sTarget: PointF): PointF {
+        val vTranslate = vTranslateForSCenter(sCenterX, sCenterY, scale)
+        val vxCenter = paddingLeft + (width - paddingRight - paddingLeft) / 2
+        val vyCenter = paddingTop + (height - paddingBottom - paddingTop) / 2
+        val sx = (vxCenter - vTranslate.x) / scale
+        val sy = (vyCenter - vTranslate.y) / scale
+        sTarget[sx] = sy
+        return sTarget
+    }
+
+    /**
+     * Convert source coordinate to view coordinate.
+     * @param sxy source coordinates to convert.
+     * @return view coordinates.
+     */
+    fun sourceToViewCoord(sxy: PointF): PointF? {
+        return sourceToViewCoord(sxy.x, sxy.y, PointF())
+    }
+
+    /**
+     * Convert source coordinate to view coordinate.
+     * @param sx source X coordinate.
+     * @param sy source Y coordinate.
+     * @return view coordinates.
+     */
+    fun sourceToViewCoord(sx: Float, sy: Float): PointF? {
+        return sourceToViewCoord(sx, sy, PointF())
+    }
+
+    /**
+     * Convert source coordinate to view coordinate.
+     * @param sx source X coordinate.
+     * @param sy source Y coordinate.
+     * @param vTarget target object for result. The same instance is also returned.
+     * @return view coordinates. This is the same instance passed to the vTarget param.
+     */
+    fun sourceToViewCoord(sx: Float, sy: Float, vTarget: PointF): PointF? {
+        if (vTranslate == null) {
+            return null
+        }
+        vTarget[sourceToViewX(sx)] = sourceToViewY(sy)
+        return vTarget
+    }
+
+    /**
+     * Convert source coordinate to view coordinate.
+     * @param sxy source coordinates to convert.
+     * @param vTarget target object for result. The same instance is also returned.
+     * @return view coordinates. This is the same instance passed to the vTarget param.
+     */
+    fun sourceToViewCoord(sxy: PointF, vTarget: PointF): PointF? {
+        return sourceToViewCoord(sxy.x, sxy.y, vTarget)
+    }
+
 
     /**
      * Builder class used to set additional options for a scale animation. Create an instance using {@link #animateScale(float)},
@@ -1082,7 +1166,7 @@ class SubsamplingScaleImageView : View {
     private inner class AnimationBuilder {
 
         private val targetScale: Float
-        private val targetSCenter: PointF?
+        private val targetSCenter: PointF
         private val vFocus: PointF?
         private var duration: Long = 500
         private var easing = EASE_IN_OUT_QUAD
@@ -1091,7 +1175,7 @@ class SubsamplingScaleImageView : View {
         private var panLimited = true
         private var listener: OnAnimationEventListener? = null
 
-        constructor(sCenter: PointF?) {
+        constructor(sCenter: PointF) {
             this.targetScale = scale
             this.targetSCenter = sCenter
             this.vFocus = null
@@ -1103,13 +1187,13 @@ class SubsamplingScaleImageView : View {
             this.vFocus = null
         }
 
-        constructor(scale: Float, sCenter: PointF?) {
+        constructor(scale: Float, sCenter: PointF) {
             this.targetScale = scale
             this.targetSCenter = sCenter
             this.vFocus = null
         }
 
-        constructor(scale: Float, sCenter: PointF?, vFocus: PointF?) {
+        constructor(scale: Float, sCenter: PointF, vFocus: PointF?) {
             this.targetScale = scale
             this.targetSCenter = sCenter
             this.vFocus = vFocus
@@ -1188,23 +1272,24 @@ class SubsamplingScaleImageView : View {
             val vxCenter = paddingLeft + (width - paddingRight - paddingLeft) / 2
             val vyCenter = paddingTop + (height - paddingBottom - paddingTop) / 2
             val targetScale: Float = limitedScale(targetScale)
-            val targetSCenter = if (panLimited) limitedSCenter(targetSCenter!!.x, targetSCenter.y, targetScale, PointF()) else targetSCenter!!
+            val targetSCenter = if (panLimited) limitedSCenter(targetSCenter.x, targetSCenter.y, targetScale, PointF()) else targetSCenter!!
 
-            anim = Anim().apply {
-                scaleStart = scale
-                scaleEnd = targetScale
-                time = System.currentTimeMillis()
-                sCenterEndRequested = targetSCenter
-                sCenterStart = getCenter()
-                sCenterEnd = targetSCenter
-                vFocusStart = sourceToViewCoord(targetSCenter)
-                vFocusEnd = PointF(vxCenter.toFloat(), vyCenter.toFloat())
-                duration = duration
-                interruptible = interruptible
-                easing = easing
-                origin = origin
-                time = System.currentTimeMillis()
-                listener = listener
+            anim = Anim()
+            anim?.let {
+                it.scaleStart = scale
+                it.scaleEnd = targetScale
+                it.time = System.currentTimeMillis()
+                it.sCenterEndRequested = targetSCenter
+                it.sCenterStart = getCenter()
+                it.sCenterEnd = targetSCenter
+                it.vFocusStart = sourceToViewCoord(targetSCenter)
+                it.vFocusEnd = PointF(vxCenter.toFloat(), vyCenter.toFloat())
+                it.duration = duration
+                it.interruptible = interruptible
+                it.easing = easing
+                it.origin = origin
+                it.time = System.currentTimeMillis()
+                it.listener = listener
             }
 
             vFocus?.let {
@@ -1343,11 +1428,11 @@ class SubsamplingScaleImageView : View {
     /**
      * Convert source to view y coordinate.
      */
-    private fun sourceToView(sy: Float): Float {
-        if (vTranslate == null) return Float.NaN
-        return sy * scale + vTranslate!!.y
+    private fun sourceToViewY(sy: Float): Float {
+        return if (vTranslate == null) {
+            Float.NaN
+        } else sy * scale + vTranslate!!.y
     }
-
 
     /**
      * Debug logger
