@@ -106,7 +106,7 @@ class ImageSource {
         private set
     var sHeight = 0
         private set
-    var sRegion: Rect? = null
+    var sRegion: Rect = Rect()
         private set
     var cached: Boolean = false
 
