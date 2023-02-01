@@ -38,12 +38,8 @@ public class SkiaImageRegionDecoder : ImageRegionDecoder {
     private val bitmapConfig: Bitmap.Config
 
     constructor(bitmapConfig: Bitmap.Config? = null) {
-        val globalBitmapConfig: Bitmap.Config? = SubsamplingScaleImageView.getPreferredBitmapConfig()
-        this.bitmapConfig = bitmapConfig ?: if (globalBitmapConfig != null) {
-            globalBitmapConfig
-        } else {
-            Bitmap.Config.RGB_565
-        }
+        val globalBitmapConfig: Bitmap.Config? = SubsamplingScaleImageView.preferredBitmapConfig
+        this.bitmapConfig = bitmapConfig ?: (globalBitmapConfig ?: Bitmap.Config.RGB_565)
 
     }
 
