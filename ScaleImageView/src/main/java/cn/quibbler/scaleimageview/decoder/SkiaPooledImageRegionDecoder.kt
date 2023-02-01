@@ -48,7 +48,7 @@ public class SkiaPooledImageRegionDecoder : ImageRegionDecoder {
     private var fileLength = Long.MAX_VALUE
 
     constructor(bitmapConfig: Bitmap.Config?) {
-        val globalBitmapConfig: Bitmap.Config? = SubsamplingScaleImageView.getPreferredBitmapConfig()
+        val globalBitmapConfig: Bitmap.Config? = SubsamplingScaleImageView.preferredBitmapConfig
         this.bitmapConfig = if (bitmapConfig != null) {
             bitmapConfig
         } else if (globalBitmapConfig != null) {
